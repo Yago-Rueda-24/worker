@@ -1,24 +1,10 @@
-/**
- * Welcome to Cloudflare Workers!
- *
- * This is a template for a Scheduled Worker: a Worker that can run on a
- * configurable interval:
- * https://developers.cloudflare.com/workers/platform/triggers/cron-triggers/
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Run `curl "http://localhost:8787/__scheduled?cron=*+*+*+*+*"` to see your Worker in action
- * - Run `npm run deploy` to publish your Worker
- *
- * Bind resources to your Worker in `wrangler.jsonc`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/workers/
- */
+import { Form4ApiClient } from "form4api";
 
 export interface Env {
 	ENV: string;
 	TELEGRAM_BOT_TOKEN: string;
 	TELEGRAM_CHAT_ID: string;
+	FORM4_API_KEY: string;
 }
 
 async function sendTelegramMessage(token: string, chatId: string, text: string) {
@@ -43,25 +29,51 @@ async function sendTelegramMessage(token: string, chatId: string, text: string) 
 	return await response.json();
 }
 
-async function runWorkflow(env: Env, triggerType: string): Promise<string> {
-	// A Cron Trigger can make requests to other endpoints on the Internet,
-	// query a D1 Database, and much more.
-	let resp = await fetch('https://api.cloudflare.com/client/v4/ips');
-	let wasSuccessful = resp.ok ? 'success' : 'fail';
-	let ipData = '';
-	if (resp.ok) {
-		const data = await resp.json() as any;
-		ipData = `IPv4: ${data.result?.ipv4_cidrs?.slice(0, 3).join(', ')}...`;
-	}
-
-	const message = `🤖 <b>Worker Workflow Triggered</b>\n` +
-		`• <b>Trigger Type:</b> ${triggerType}\n` +
-		`• <b>Time:</b> ${new Date().toISOString()}\n` +
-		`• <b>Cloudflare IPs fetch:</b> ${wasSuccessful}\n` +
-		`• <b>Data preview:</b> ${ipData}`;
-
+async function runWorkflow(env: Env, triggerType: string, ticker?: string): Promise<string> {
 	if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) {
 		throw new Error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID configuration.");
+	}
+	if (!env.FORM4_API_KEY) {
+		throw new Error("Missing FORM4_API_KEY configuration.");
+	}
+
+	const client = new Form4ApiClient({ apiKey: env.FORM4_API_KEY });
+
+	console.log(`Fetching insider transactions from Form4API... (Ticker filter: ${ticker || "none"})`);
+
+	// Fetch recent insider purchases and filter to open-market in-memory
+	const rawTxns = await client.transactions.list({
+		ticker: ticker || undefined,
+		code: "P",
+		perPage: 15
+	});
+
+	const txns = rawTxns.filter(txn => txn.isOpenMarket).slice(0, 5);
+
+	let message = `🤖 <b>Form4API Insider Purchases Alert</b>\n` +
+		`• <b>Trigger:</b> ${triggerType}\n` +
+		`• <b>Date/Time:</b> ${new Date().toISOString().slice(0, 19).replace('T', ' ')}\n\n`;
+
+	if (txns.length === 0) {
+		message += `❌ No recent insider purchases found${ticker ? ` for ticker <b>${ticker}</b>` : ""}.`;
+	} else {
+		message += `🚨 <b>Recent Insider Purchases:</b>\n\n`;
+		for (const txn of txns) {
+			const formattedValue = txn.totalValue
+				? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(txn.totalValue)
+				: 'N/A';
+			const formattedPrice = txn.pricePerShare
+				? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(txn.pricePerShare)
+				: 'N/A';
+
+			const role = txn.isDirector ? "Director" : txn.isOfficer ? `Officer (${txn.insiderTitle || "N/A"})` : "10% Owner";
+
+			message += `📈 <b>${txn.ticker}</b> (${txn.companyName})\n` +
+				`👤 <b>Insider:</b> ${txn.insiderName} (${role})\n` +
+				`💼 <b>Shares:</b> ${txn.sharesAmount.toLocaleString()} @ ${formattedPrice}\n` +
+				`💰 <b>Total Value:</b> ${formattedValue}\n` +
+				`📅 <b>Date:</b> ${txn.transactionDate.split('T')[0]}\n\n`;
+		}
 	}
 
 	await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, env.TELEGRAM_CHAT_ID, message);
@@ -75,7 +87,8 @@ export default {
 		// Allow manual triggering via GET /trigger
 		if (url.pathname === '/trigger') {
 			try {
-				const messageSent = await runWorkflow(env, 'Manual HTTP request (/trigger)');
+				const ticker = url.searchParams.get('ticker') || undefined;
+				const messageSent = await runWorkflow(env, 'Manual HTTP request (/trigger)', ticker);
 				return new Response(JSON.stringify({
 					success: true,
 					message: "Workflow executed manually and Telegram message sent!",
@@ -97,8 +110,10 @@ export default {
 
 		// Default response
 		return new Response(
-			`Welcome to the Cloudflare Worker Telegram test!\n\n` +
-			`To trigger the workflow manually and send a message to Telegram, visit: ${url.origin}/trigger\n\n` +
+			`Welcome to the Cloudflare Worker Telegram Form4API test!\n\n` +
+			`To trigger the workflow manually and send a message to Telegram, visit:\n` +
+			`- General purchases: ${url.origin}/trigger\n` +
+			`- Specific ticker purchases (e.g. Apple): ${url.origin}/trigger?ticker=AAPL\n\n` +
 			`Alternatively, you can test the scheduled (cron) handler locally with wrangler using "--test-scheduled".`,
 			{ status: 200 }
 		);
@@ -115,4 +130,5 @@ export default {
 		}
 	},
 } satisfies ExportedHandler<Env>;
+
 
