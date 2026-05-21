@@ -1,5 +1,6 @@
 import { Transaction } from "form4api";
 import { FinnhubProfile } from "./types";
+import { convertToUSD } from "./finnhub";
 
 interface ScoringInput {
 	historyTxns: Transaction[];
@@ -47,7 +48,8 @@ export function calculateScore(input: ScoringInput): ScoringResult {
 	const hasAutoSale = historyTxns.some(t => t.transactionCode === "S" && t.is10b5Plan);
 	const hasOptionExercise = historyTxns.some(t => t.transactionCode === "M" || t.transactionCode === "X");
 
-	const marketCap = profile ? profile.marketCapitalization : null;
+	const rawMarketCap = profile ? profile.marketCapitalization : null;
+	const marketCap = rawMarketCap !== null ? convertToUSD(rawMarketCap, profile?.currency) : null;
 
 	let score = 0;
 	const scoreBreakdown: string[] = [];

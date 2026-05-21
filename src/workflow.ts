@@ -1,7 +1,7 @@
 import { Form4ApiClient } from "form4api";
 import { Env, TickerResult, FinnhubProfile, FinnhubEarningsCalendar } from "./types";
 import { sendTelegramMessage } from "./telegram";
-import { fetchFinnhub, formatMarketCap, formatValue } from "./finnhub";
+import { fetchFinnhub, formatMarketCap, formatValue, convertToUSD } from "./finnhub";
 import { calculateScore } from "./scoring";
 
 export async function runWorkflow(env: Env, triggerType: string, ticker?: string): Promise<string> {
@@ -95,7 +95,8 @@ export async function runWorkflow(env: Env, triggerType: string, ticker?: string
 				profile
 			});
 
-			const marketCap = profile ? profile.marketCapitalization : null;
+			const rawMarketCap = profile ? profile.marketCapitalization : null;
+			const marketCap = rawMarketCap !== null ? convertToUSD(rawMarketCap, profile?.currency) : null;
 			const sector = profile ? profile.finnhubIndustry : null;
 
 			let nextEarningsDate: string | null = null;

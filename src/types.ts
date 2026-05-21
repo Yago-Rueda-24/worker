@@ -30,6 +30,7 @@ export interface FinnhubProfile {
 	name: string;
 	marketCapitalization: number;
 	finnhubIndustry: string;
+	currency?: string;
 }
 
 export interface EarningsCalendarEvent {
